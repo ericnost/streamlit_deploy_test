@@ -1,5 +1,5 @@
 import streamlit as st
-from ECHO_modules import get_echo_data
+from ECHO_modules.get_data import get_echo_data
 
 try:
     data = get_echo_data('select * from "ECHO_EXPORTER" limit 5')
