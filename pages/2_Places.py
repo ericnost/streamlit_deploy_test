@@ -22,7 +22,7 @@ substances = ["total_co_2022",
             "total_so2_2022",
             "total_ammonia_2022",
             "total_pm25_2022"
-            ] # Eventually should include other kinds of measures.... How to keep track of these? And name them appropriately...
+            ] # Eventually these should be EJScreen-like metrics (see Kelly Evans's work).... 
 
 col1, col2 = st.columns([0.6, 0.4])
 
@@ -39,10 +39,15 @@ chart_data = chart_data.sort_values(by=select_substances, ascending = False)
 # Prep map data
 m = folium.Map(tiles="cartodb positron")
 
+# Create GeoJson
+fg = folium.FeatureGroup(name="Facilities")
+layer = folium.GeoJson(fac.filters(attribute=select_substances, operator=">=", value=0)) # Illustrates Streamlit Folium dynamic render
+fg.add_child(layer)
+
 with col1:
     st_folium(
-        fac.show_data_map(attribute=select_substances),#m,
-        #feature_group_to_add=fg,
+        m,
+        feature_group_to_add=fg,
         returned_objects=[],
         use_container_width=True
     )

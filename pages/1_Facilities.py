@@ -44,7 +44,6 @@ chart_data.to_crs(4326, inplace=True)
 markers = [folium.CircleMarker(location=[mark.geometry.y, mark.geometry.x], 
       popup=folium.Popup(str(mark["NpriID"])+'<br><b>Substances:</b> '+mark["Substances"]+'<br><b>Years Active:</b> '+str(mark["NumberOfActiveYears"])+'<br><b>Industry:</b> '+mark["NAICSTitleEn"]),
       radius=(mark["quantile"] * 5) + 3, fill_color="orange", stroke="None") for index, mark in chart_data.iterrows() if not mark.geometry.is_empty]
-# Proportional scaling of data. According to Streamlit, "The size of the circles representing each point, in meters." (!!!)
 fg = folium.FeatureGroup(name="Facilities")
 for marker in markers:
     fg.add_child(marker)
