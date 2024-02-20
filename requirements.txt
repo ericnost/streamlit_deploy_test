@@ -1,3 +1,5 @@
 # Requirements
 streamlit
-ECHO_Modules
+npri
+streamlit-folium
+
