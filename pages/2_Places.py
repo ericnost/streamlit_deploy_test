@@ -9,10 +9,13 @@ st.markdown("# Places")
 
 @st.cache_data
 def get_data():
-    fac = npri.Places(across="ON") #near=[43.54, -80.25]
-    data = fac.data
-    data.reset_index(inplace=True) # Expose ID
-    return fac,data
+    try:
+        fac = npri.Places(across=["ON"]) #near=[43.54, -80.25]
+        data = fac.data
+        data.reset_index(inplace=True) # Expose ID
+        return fac,data
+    except:
+        print("Couldn't get data")
 fac,data = get_data()
 
 #st.write(data)
@@ -41,7 +44,7 @@ m = folium.Map(tiles="cartodb positron")
 
 # Create GeoJson
 fg = folium.FeatureGroup(name="Facilities")
-layer = folium.GeoJson(fac.filters(attribute=select_substances, operator=">=", value=0)) # Illustrates Streamlit Folium dynamic render
+layer = folium.GeoJson(fac.data.loc[fac.data[select_substances] >= 0]) #.filters(attribute=select_substances, operator=">=", value=0)) # Illustrates Streamlit Folium dynamic render
 fg.add_child(layer)
 
 with col1:
