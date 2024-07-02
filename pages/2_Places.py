@@ -4,12 +4,9 @@ from streamlit_folium import st_folium
 import folium # installed from npri
 import altair
 from copy import deepcopy
+import requests
 
-st.set_page_config(layout="wide", page_title="Overview")
-st.markdown("# Places")
-
-if st.button("Overview"):
-    st.switch_page("pages/1_Overview.py")
+st.set_page_config(layout="wide", page_title="Places")
 
 substances = ["Carbon monoxide",
             "Sulphur dioxide",
@@ -20,6 +17,10 @@ substances = ["Carbon monoxide",
             "Volatile Organic Compounds (Total)"
             ]
 times = ["Most Recent", "Past 5 Years", "Past 15 Years", "All Years"]
+cimd = {"Residential instability Scores": ["Residential Instability Scores", "the tendency of neighbourhood inhabitants to fluctuate over time, taking into consideration both housing and familial characteristics"],
+        "Economic dependency Scores": ["Economic Dependency Scores", "to reliance on the workforce, or a dependence on sources of income other than employment income"], 
+        "Ethno-cultural composition Scores": ["Ethnocultural Composition Scores", "the community make-up of immigrant populations, and at the national-level, for example, takes into consideration indicators such as ... the proportion of the population who self-identified as visible minority..."], 
+        "Situational vulnerability Scores": ["Situational Vulnerability Scores", "variations in socio-demographic conditions in the areas of housing and education, while taking into account other demographic characteristics"]}    
 
 @st.cache_data
 def get_this_fsa(fsa):
@@ -70,7 +71,8 @@ def get_facilities(dauids):
         return data
     except:
         print("Couldn't get data")
-   
+
+@st.cache_data 
 def get_context(list_of_ids):
     try:
         print("getting data...")
@@ -81,94 +83,102 @@ def get_context(list_of_ids):
         print("Couldn't get data")
 
 # PAGE LAYOUT
+top = st.container()
+left, middle, right = top.columns([.15,.6, .25])
+left.markdown("# Places")
+middle.markdown("This page provides more information about facilities in a given place reporting releases of regulated substances to the National Pollutant Release Inventory")
+middle.warning("These numbers are facility self-reported estimates compiled by Environment and Climate Change Canada. Please see here for more information about how to interpet NPRI data: https://www.canada.ca/en/environment-climate-change/services/national-pollutant-release-inventory/using-interpreting-data.html")
+right.markdown("Click here to see an overview: ")
+if right.button("Overview"):
+    st.switch_page("pages/1_Overview.py")
+
 col1, col2 = st.columns([0.4, 0.6])
 
-col2.markdown("## Select an FSA")
+# SELECTIONS
 select_fsa  = col2.selectbox(
-    "Select FSA",
-    ["N1E"]#list(fsas["ForwardSortationArea"].unique()),
-    
+    "### **1. Select an FSA**",
+    list(fsas["ForwardSortationArea"].unique()),
+    help = "Forward Sortation Areas are the first three numbers/letters of a postal code, e.g. N1E"
 )
+col2a, col2b = col2.columns(2)
+select_substance  = col2a.selectbox( #multiselect
+    "### **2. Select a Criteria Air Contaminant**",
+    substances,
+    help = "Criteria Air Contaminants are the most common air pollutants in Canada by weight. See here: https://www.canada.ca/en/environment-climate-change/services/air-pollution/pollutants/common-contaminants.html"
+)
+select_time  = col2a.selectbox(
+    "### **3. Select a timeframe**",
+    times,   
+    help = "NPRI began in 1993, but some substances were only added to the list later."
+)
+## Get health information
+url = "https://www.canada.ca/en/health-canada/services/chemical-substances/fact-sheets/chemicals-glance/{}.html".format(select_substance.lower().replace(" ", "-"))
+page = requests.get(url)
+if page.status_code == 200:
+    health = "Learn more about "+select_substance+" here: "+ url
+else:
+    health = "Unable to retrieve information about the health effects of "+select_substance+" at this time. Try searching: https://www.canada.ca/en/health-canada/services/chemical-substances/fact-sheets/chemicals-glance/"
+col2a.info(health, icon="ℹ️")
 
-# Get data
+# GET DATA
 places = get_places(select_fsa)
 this_fsa = get_this_fsa(select_fsa)
 #st.write(places.data)
 dauids = list(places.data.index.unique())
 facilities = get_facilities(dauids)
 #st.write(facilities.data)
-"""
 
-# Get data
-records = get_records(facilities, select_times)
-
-# Prep data
-ids = list(records["NpriID"].unique())
-list_of_ids = ""
-for id in ids:
-    list_of_ids += str(id) + ","
-list_of_ids = list_of_ids[:-1]
-context = get_context(list_of_ids)
-context['geometry'] = geopandas.GeoSeries.from_wkb(context['geom'])
-context.drop("geom", axis=1, inplace=True)
-context.set_index("NpriID", inplace=True)
-
-# Aggregate by NpriID
-aggregate = records.groupby(by=["NpriID", "Substance"])[["SumInTonnes"]].sum().reset_index()
-aggregate.set_index("NpriID", inplace=True)
-"""
-# Prep map
-col2a, col2b = col2.columns(2)
-col2a.markdown("## Select a measure")
-select_substance  = col2a.selectbox(
-    "Select substance",
-    substances,  
-)
-
-select_time  = col2a.selectbox(
-    "Select a timeframe",
-    times,   
-)
-
+# Process data
 select_measure = select_substance + " - " + select_time
-
 min = facilities.data[select_measure].min()
 max = facilities.data[select_measure].max()
 filter_fac = col2a.slider(
-    "Which facilities do you want to focus on?",
+    "### **4. Filter the facilities releasing "+ select_substance +" in this range (tonnes):**",
     min, max, (min, max)
     )
 filtered = deepcopy(facilities)
 filtered.working_data = filtered.working_data.loc[(filtered.working_data[select_measure]>=filter_fac[0]) & (filtered.working_data[select_measure]<=filter_fac[1])]
 #st.write(filtered)
 
-to_chart = filtered.working_data.reset_index()[["NpriID", select_measure]].sort_values(by=select_measure, ascending=False).head(10)
+# Chart data
+col2b.markdown("### {} | {} | {} ".format(
+    select_fsa, 
+    select_measure,
+    str(round(filter_fac[0],2)) + "-" + str(round(filter_fac[1],2)) + " tonnes",
+    )
+) 
+
+to_chart = filtered.working_data.reset_index()[["NpriID", select_measure]]
 to_chart["NpriID"] = to_chart["NpriID"].astype(str)
+col2b.markdown("#### Top 10 Facilities ({} total)".format(str(to_chart.shape[0])))
 col2b.altair_chart(
-    altair.Chart(to_chart).mark_bar().encode(
+    altair.Chart(to_chart.sort_values(by=select_measure, ascending=False).head(10)).mark_bar().encode(
         x=altair.X(select_measure),
         y=altair.Y("NpriID" ).sort('-x')
     )
 )
 # Industries
-toptenind = filtered.working_data.reset_index().loc[~filtered.working_data.reset_index()[select_measure].isna()].groupby(by="NAICSTitleEn")[["NpriID"]].nunique().sort_values(by="NpriID", ascending=False).head(10)
+toptenind = filtered.working_data.reset_index().loc[~filtered.working_data.reset_index()[select_measure].isna()].groupby(by="NAICSTitleEn")[[select_measure]].sum()
+col2b.markdown("#### Top 10 Industries ({} total)".format(str(toptenind.shape[0])))
+toptenind = toptenind.reset_index().sort_values(by=select_measure, ascending=False).head(10)
 col2b.altair_chart(
-    altair.Chart(toptenind.reset_index()).mark_bar().encode(
-        x=altair.X("NpriID"),
+    altair.Chart(toptenind).mark_bar().encode(
+        x=altair.X(select_measure),
         y=altair.Y("NAICSTitleEn" ).sort('-x')
     )
 )
 
 # PLACES
-col2a.markdown("## Select a CIMD score")
 select_attribute_place = col2a.selectbox(
-    "Select attribute",
-    list(places.data.columns),
+    "### **5. Select a Census indicator of 'deprivation' to display**",
+    cimd.keys(),
+    help =  "".join(s[0] + " " + s[1] + ". " for s in cimd.values()) + "See here: https://www150.statcan.gc.ca/n1/pub/45-20-0001/452000012023002-eng.htm"
 )
+#col2a.info(cimd[select_attribute_place][0] + " refers to " + cimd[select_attribute_place][1] + ".",icon="ℹ️")
 min = places.data[select_attribute_place].min()
 max = places.data[select_attribute_place].max()
 filter_place = col2a.slider(
-    "Which places do you want to focus on?",
+    "### **6. Focus on Census Dissemination Areas with " + select_attribute_place + " in this range:**",
     min, max, (min, max)
     )
 filtered_places = deepcopy(places)
@@ -179,14 +189,14 @@ filtered_places.working_data = filtered_places.working_data.loc[(filtered_places
 x = select_measure #select_substance + " - Allocated"
 y = select_attribute_place
 chart_data = filtered_places.working_data.reset_index()[[x,y]]
+col2b.markdown("#### Characteristics of Dissemination Areas with Facilities".format(str(toptenind.shape[0])))
 col2b.scatter_chart(filtered_places.working_data.reset_index(), x=x, y=y)
 
-
-
 # CIMD
-## median, max, distribution
-col2a.metric(select_attribute_place + " median:", filtered_places.working_data[select_attribute_place].median())
-col2a.metric(select_attribute_place + " max:", filtered_places.working_data[select_attribute_place].max())
+#x, y = col2a.columns([.5,.5])
+col2a.metric("Median of "+cimd[select_attribute_place][0]+ " in all Dissemination Areas intersecting with this FSA", round(filtered_places.working_data[select_attribute_place].median(),2))
+col2a.metric("Max of "+cimd[select_attribute_place][0]+ " in all Dissemination Areas intersecting with this FSA", round(filtered_places.working_data[select_attribute_place].max(),2)) 
+
 
 # Map
 filtered.get_features(select_measure)
@@ -197,12 +207,10 @@ long = (filtered_places.features[select_attribute_place][0].get_bounds()[1][1] +
 m = folium.Map(tiles="cartodb positron", zoom_start = 12, location=(lat,long))
 fg = folium.FeatureGroup()
 
-
 for da in filtered_places.features[select_attribute_place]:
     fg.add_child(da)
 for marker in filtered.features[select_measure]:
     fg.add_child(marker)
-
 
 with col1:
     st_folium(
