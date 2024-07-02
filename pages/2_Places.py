@@ -1,12 +1,15 @@
 import streamlit as st
 from npri import npri
-import pandas # installed from npri
-import folium # installed from npri
 from streamlit_folium import st_folium
-import geopandas
+import folium # installed from npri
+import altair
+from copy import deepcopy
 
 st.set_page_config(layout="wide", page_title="Overview")
-st.markdown("# Overview")
+st.markdown("# Places")
+
+if st.button("Overview"):
+    st.switch_page("pages/1_Overview.py")
 
 substances = ["Carbon monoxide",
             "Sulphur dioxide",
@@ -16,21 +19,25 @@ substances = ["Carbon monoxide",
             "Nitrogen oxides (expressed as nitrogen dioxide)",
             "Volatile Organic Compounds (Total)"
             ]
-times = [year for year in range(1993,2023)]
+times = ["Most Recent", "Past 5 Years", "Past 15 Years", "All Years"]
 
 @st.cache_data
-def get_substances():
+def get_this_fsa(fsa):
+    """
+    Load geometry of FSA for mapping purposes (need to add FSA shapes to Google db)
+    """
     try:
+        print("getting data...")
         data, url, report_url = npri.get_npri_data(view=None, endpoint="sql", 
-                                           sql = 'select distinct "Substance" from npri_reports_full_table;') # need to enable multi-substance select....
+                                           sql = 'select * from from lfsa.... where X = \''+fsa+'\';')
         return data
     except:
         print("Couldn't get data")
-substances = get_substances()
 
 @st.cache_data
 def get_fsas():
     try:
+        print("getting data...")
         data, url, report_url = npri.get_npri_data(view=None, endpoint="sql", 
                                            sql = 'select distinct "ForwardSortationArea" from npri_exporter_table;')
         return data
@@ -45,6 +52,7 @@ def get_places(fsa):
     """
     fsa = [fsa]
     try:
+        print("getting data...")
         data = npri.Places(place=fsa)
         return data
     except:
@@ -55,8 +63,9 @@ def get_facilities(dauids):
     """
     dauids -- list: DAUIDs that intersect the selected FSA 
     """
-    st.write(dauids)
+    #st.write(dauids)
     try:
+        print("getting data...")
         data = npri.Facilities(within=dauids)
         return data
     except:
@@ -64,6 +73,7 @@ def get_facilities(dauids):
    
 def get_context(list_of_ids):
     try:
+        print("getting data...")
         data, url, report_url = npri.get_npri_data(view=None, endpoint="sql", 
                                            sql = 'select "NpriID", "median_instability_2021", geom from npri_exporter_table where "NpriID" in ({});'.format(list_of_ids))
         return data
@@ -79,11 +89,14 @@ select_fsa  = col2.selectbox(
     ["N1E"]#list(fsas["ForwardSortationArea"].unique()),
     
 )
+
+# Get data
 places = get_places(select_fsa)
-st.write(places.data)
+this_fsa = get_this_fsa(select_fsa)
+#st.write(places.data)
 dauids = list(places.data.index.unique())
 facilities = get_facilities(dauids)
-st.write(facilities.data)
+#st.write(facilities.data)
 """
 
 # Get data
@@ -105,30 +118,89 @@ aggregate = records.groupby(by=["NpriID", "Substance"])[["SumInTonnes"]].sum().r
 aggregate.set_index("NpriID", inplace=True)
 """
 # Prep map
-col2.markdown("## Select an attribute of facilities")
-select_attribute_fac  = col2.selectbox(
-    "Select attribute",
-    list(facilities.data.columns),
-    
+col2a, col2b = col2.columns(2)
+col2a.markdown("## Select a measure")
+select_substance  = col2a.selectbox(
+    "Select substance",
+    substances,  
 )
-col2.markdown("## Select an attribute of places")
-select_attribute_place = col2.selectbox(
+
+select_time  = col2a.selectbox(
+    "Select a timeframe",
+    times,   
+)
+
+select_measure = select_substance + " - " + select_time
+
+min = facilities.data[select_measure].min()
+max = facilities.data[select_measure].max()
+filter_fac = col2a.slider(
+    "Which facilities do you want to focus on?",
+    min, max, (min, max)
+    )
+filtered = deepcopy(facilities)
+filtered.working_data = filtered.working_data.loc[(filtered.working_data[select_measure]>=filter_fac[0]) & (filtered.working_data[select_measure]<=filter_fac[1])]
+#st.write(filtered)
+
+to_chart = filtered.working_data.reset_index()[["NpriID", select_measure]].sort_values(by=select_measure, ascending=False).head(10)
+to_chart["NpriID"] = to_chart["NpriID"].astype(str)
+col2b.altair_chart(
+    altair.Chart(to_chart).mark_bar().encode(
+        x=altair.X(select_measure),
+        y=altair.Y("NpriID" ).sort('-x')
+    )
+)
+# Industries
+toptenind = filtered.working_data.reset_index().loc[~filtered.working_data.reset_index()[select_measure].isna()].groupby(by="NAICSTitleEn")[["NpriID"]].nunique().sort_values(by="NpriID", ascending=False).head(10)
+col2b.altair_chart(
+    altair.Chart(toptenind.reset_index()).mark_bar().encode(
+        x=altair.X("NpriID"),
+        y=altair.Y("NAICSTitleEn" ).sort('-x')
+    )
+)
+
+# PLACES
+col2a.markdown("## Select a CIMD score")
+select_attribute_place = col2a.selectbox(
     "Select attribute",
     list(places.data.columns),
 )
+min = places.data[select_attribute_place].min()
+max = places.data[select_attribute_place].max()
+filter_place = col2a.slider(
+    "Which places do you want to focus on?",
+    min, max, (min, max)
+    )
+filtered_places = deepcopy(places)
+filtered_places.working_data = filtered_places.working_data.loc[(filtered_places.working_data[select_attribute_place]>=filter_place[0]) & (filtered_places.working_data[select_attribute_place]<=filter_place[1])]
+#st.write(filtered)
 
-facilities.get_features(select_attribute_fac)
-places.get_features(select_attribute_place)
-lat = (places.features[select_attribute_place][0].get_bounds()[1][0] + places.features[select_attribute_place][0].get_bounds()[0][0]) / 2
-long = (places.features[select_attribute_place][0].get_bounds()[1][1] + places.features[select_attribute_place][0].get_bounds()[0][1]) / 2
+# Scatter plot
+x = select_measure #select_substance + " - Allocated"
+y = select_attribute_place
+chart_data = filtered_places.working_data.reset_index()[[x,y]]
+col2b.scatter_chart(filtered_places.working_data.reset_index(), x=x, y=y)
 
-m = folium.Map(tiles="cartodb positron", zoom_start = 11, location=(lat,long))
+
+
+# CIMD
+## median, max, distribution
+col2a.metric(select_attribute_place + " median:", filtered_places.working_data[select_attribute_place].median())
+col2a.metric(select_attribute_place + " max:", filtered_places.working_data[select_attribute_place].max())
+
+# Map
+filtered.get_features(select_measure)
+filtered_places.get_features(select_attribute_place)
+lat = (filtered_places.features[select_attribute_place][0].get_bounds()[1][0] + filtered_places.features[select_attribute_place][0].get_bounds()[0][0]) / 2
+long = (filtered_places.features[select_attribute_place][0].get_bounds()[1][1] + filtered_places.features[select_attribute_place][0].get_bounds()[0][1]) / 2
+
+m = folium.Map(tiles="cartodb positron", zoom_start = 12, location=(lat,long))
 fg = folium.FeatureGroup()
 
 
-for da in places.features[select_attribute_place]:
+for da in filtered_places.features[select_attribute_place]:
     fg.add_child(da)
-for marker in facilities.features[select_attribute_fac]:
+for marker in filtered.features[select_measure]:
     fg.add_child(marker)
 
 
@@ -139,109 +211,3 @@ with col1:
         returned_objects=[],
         use_container_width=True
     )
-
-"""
-
-all_fac = []
-markers = []
-
-for i,s in enumerate(select_substances):
-    if i == 0:
-        sub0 = aggregate.loc[aggregate["Substance"]==s]
-        col2.markdown("## Top ten facilities: {}, ".format(s) + str(select_times[0]) + "-" + str(select_times[1]))
-        toptentotal = sub0.sort_values(by="SumInTonnes", ascending=False).head(10)
-        col2.dataframe(toptentotal) # Add more info here
-        select_facs_0 = col2.slider(
-            "Facilities releasing "+ s +" in this range:",
-            sub0["SumInTonnes"].min(), sub0["SumInTonnes"].max(), (sub0["SumInTonnes"].min(), sub0["SumInTonnes"].max()))
-        ## Markers
-        sub0['quantile'] = pandas.qcut(sub0["SumInTonnes"], 4, labels=False)
-        to_mark = sub0.join(context, how="left")
-        to_mark = geopandas.GeoDataFrame(to_mark, crs=3347)   
-        to_mark.to_crs(4326, inplace=True)
-        to_mark.set_geometry("geometry", inplace=True)
-        to_mark = to_mark.loc[(to_mark["SumInTonnes"]>=select_facs_0[0]) & (to_mark["SumInTonnes"]<=select_facs_0[1])]
-        markers.extend([folium.CircleMarker(location=[mark.geometry.y, mark.geometry.x], 
-        popup=folium.Popup(
-            str(index)+'<br><b>{}:</b> '.format(s)+str(mark["SumInTonnes"])+'<br><b>CIMD - Median Residential Instability Score: </b>'+str(mark["median_instability_2021"])+''),
-        radius=(mark["quantile"] * 5) + 3, fill_color="#FFA500", weight=.5, fill_opacity=0.75
-        ) for index, mark in to_mark.iterrows() if mark.geometry is not None
-        ])
-        all_fac.append(sub0)
-        col2.bar_chart(records.loc[records["Substance"]==s][["ReportYear", "SumInTonnes"]].sort_values(by="SumInTonnes"), x = "ReportYear", y="SumInTonnes", color="#FFA500")
-    if i == 1:
-        sub1 = aggregate.loc[aggregate["Substance"]==s]
-        col2.markdown("## Top ten facilities: {}, ".format(s) + str(select_times[0]) + "-" + str(select_times[1]))
-        toptentotal = sub1.sort_values(by="SumInTonnes", ascending=False).head(10)
-        col2.dataframe(toptentotal)
-        select_facs_1 = col2.slider(
-            "Facilities releasing "+ s +" in this range:",
-            sub1["SumInTonnes"].min(), sub1["SumInTonnes"].max(), (sub1["SumInTonnes"].min(), sub1["SumInTonnes"].max()))
-        ## Markers
-        sub1['quantile'] = pandas.qcut(sub1["SumInTonnes"], 4, labels=False)
-        to_mark = sub1.join(context, how="left")
-        to_mark = geopandas.GeoDataFrame(to_mark, crs=3347)   
-        to_mark.to_crs(4326, inplace=True)
-        to_mark.set_geometry("geometry", inplace=True)
-        to_mark = to_mark.loc[(to_mark["SumInTonnes"]>=select_facs_1[0]) & (to_mark["SumInTonnes"]<=select_facs_1[1])]
-        markers.extend([folium.CircleMarker(location=[mark.geometry.y, mark.geometry.x], 
-        popup=folium.Popup(
-            str(index)+'<br><b>{}:</b> '.format(s)+str(mark["SumInTonnes"])+'<br><b>CIMD - Median Residential Instability Score: </b>'+str(mark["median_instability_2021"])+''),
-        radius=(mark["quantile"] * 5) + 3, fill_color="#50C878", weight=.5, fill_opacity=0.75
-        ) for index, mark in to_mark.iterrows() if mark.geometry is not None
-        ])
-        all_fac.append(sub1)
-        col2.bar_chart(records.loc[records["Substance"]==s][["ReportYear", "SumInTonnes"]].sort_values(by="SumInTonnes"), x = "ReportYear", y="SumInTonnes", color="#50C878")
-    if i == 2:
-        sub2 = aggregate.loc[aggregate["Substance"]==s]
-        col2.markdown("## Top ten facilities: {}, ".format(s) + str(select_times[0]) + "-" + str(select_times[1]))
-        toptentotal = sub2.sort_values(by="SumInTonnes", ascending=False).head(10)
-        col2.dataframe(toptentotal) # Add more info here
-        select_facs_2 = col2.slider(
-            "Facilities releasing "+ s +" in this range:",
-            sub2["SumInTonnes"].min(), sub2["SumInTonnes"].max(), (sub2["SumInTonnes"].min(), sub2["SumInTonnes"].max()))
-        ## Markers
-        sub2['quantile'] = pandas.qcut(sub2["SumInTonnes"], 4, labels=False)
-        to_mark = sub2.join(context, how="left")
-        to_mark = geopandas.GeoDataFrame(to_mark, crs=3347)   
-        to_mark.to_crs(4326, inplace=True)
-        to_mark.set_geometry("geometry", inplace=True)
-        to_mark = to_mark.loc[(to_mark["SumInTonnes"]>=select_facs_2[0]) & (to_mark["SumInTonnes"]<=select_facs_2[1])]
-        markers.extend([folium.CircleMarker(location=[mark.geometry.y, mark.geometry.x], 
-        popup=folium.Popup(
-            str(index)+'<br><b>{}:</b> '.format(s)+str(mark["SumInTonnes"])+'<br><b>CIMD - Median Residential Instability Score: </b>'+str(mark["median_instability_2021"])+''),
-        radius=(mark["quantile"] * 5) + 3, fill_color="#FF5733", weight=.5, fill_opacity=0.75
-        ) for index, mark in to_mark.iterrows() if mark.geometry is not None
-        ])
-        all_fac.append(sub2)
-        col2.bar_chart(records.loc[records["Substance"]==s][["ReportYear", "SumInTonnes"]].sort_values(by="SumInTonnes"), x = "ReportYear", y="SumInTonnes", color="#FF5733")
-
-# Make larger markers appear in the back so as to not obscure small markers
-markers.sort(key=lambda x: x.options["radius"], reverse=True)
-for marker in markers:
-    fg.add_child(marker)
-
-#bounds = m.get_bounds() # Currently does not work. Follow: https://github.com/randyzwitch/streamlit-folium/issues/152
-#m.fit_bounds(bounds)
-
-with col1:
-    st_folium(
-        m,
-        feature_group_to_add=fg,
-        returned_objects=[],
-        use_container_width=True
-    )
-    #st.warning('There are '+str(nodata)+' facilities without records on '+selector+' and an additional '+str(unmappable)+' that cannot be mapped', icon="⚠️")
-
-#col1.bar_chart(chart_data, x = "NpriID", y = selector) # Would need Altair for an effective (sorted) bar chart
-
-x, y = col1.columns(2)
-from functools import reduce
-all_fac = reduce(lambda x, y: pandas.merge(x, y, on = 'NpriID'), all_fac)
-all_fac = list(all_fac.index.unique())
-x.metric("Median Residential Instability Score", round(context.loc[context.index.isin(all_fac)][["median_instability_2021"]].median(),2)) # Need to explain median median.
-x.info('Explain median of median and compare to national residential instability', icon="ℹ️")
-# OTHER METRICS HERE
-y.metric("Max Residential Instability Score", round(context.loc[context.index.isin(all_fac)][["median_instability_2021"]].max(),2)) # Need to explain max median.
-y.info('Explain median of median and compare to national residential instability', icon="ℹ️")
-"""

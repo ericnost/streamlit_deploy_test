@@ -4,25 +4,21 @@ import pandas # installed from npri
 import folium # installed from npri
 from streamlit_folium import st_folium
 import geopandas
+import altair
 
 st.set_page_config(layout="wide", page_title="Overview")
 st.markdown("# Overview")
 
-substances = ["Carbon monoxide",
-            "Sulphur dioxide",
-            "Ammonia (total)",
-            "PM10 - Particulate Matter <= 10 Micrometers",
-            "PM2.5 - Particulate Matter <= 2.5 Micrometers",
-            "Nitrogen oxides (expressed as nitrogen dioxide)",
-            "Volatile Organic Compounds (Total)"
-            ]
+if st.button("Places"):
+    st.switch_page("pages/2_Places.py")
+
 times = [year for year in range(1993,2023)]
 
 @st.cache_data
 def get_substances():
     try:
         data, url, report_url = npri.get_npri_data(view=None, endpoint="sql", 
-                                           sql = 'select distinct "Substance" from npri_reports_full_table;') # need to enable multi-substance select....
+                                           sql = 'select distinct "Substance" from npri_reports_full_table;') 
         return data
     except:
         print("Couldn't get data")
@@ -37,17 +33,18 @@ def get_records(substance, years):
         return data
     except:
         print("Couldn't get data")
-    
+
+cimd = {"median_instability_2021": "Residential Instability Scores across Dissemination Areas within 5km of these Facilities", "median_dependency_2021": "Economic Dependency Scores across Dissemination Areas within 5km of these Facilities", "median_composition_2021": "Ethnocultural Composition Scores across Dissemination Areas within 5km of these Facilities", "median_vulnerability_2021": "Situational Vulnerability Scores across Dissemination Areas within 5km of these Facilities"}    
 def get_context(list_of_ids):
     try:
         data, url, report_url = npri.get_npri_data(view=None, endpoint="sql", 
-                                           sql = 'select "NpriID", "median_instability_2021", geom from npri_exporter_table where "NpriID" in ({});'.format(list_of_ids))
+                                           sql = 'select "NpriID", "NAICSTitleEn", "median_instability_2021", "median_dependency_2021", "median_composition_2021", "median_vulnerability_2021", geom from npri_exporter_table where "NpriID" in ({});'.format(list_of_ids))
         return data
     except:
         print("Couldn't get data")
 
 # PAGE LAYOUT
-col1, col2 = st.columns([0.6, 0.4])
+col1, col2 = st.columns([0.4, 0.6])
 
 col2.markdown("## Select up to 3 pollutants")
 select_substances  = col2.multiselect(
@@ -81,6 +78,11 @@ context.set_index("NpriID", inplace=True)
 aggregate = records.groupby(by=["NpriID", "Substance"])[["SumInTonnes"]].sum().reset_index()
 aggregate.set_index("NpriID", inplace=True)
 
+# Aggregate by industry
+ind = records.join(context[["NAICSTitleEn"]])
+ind = ind.groupby(by=["NAICSTitleEn", "Substance"])[["SumInTonnes"]].sum().reset_index()
+ind.set_index("NAICSTitleEn", inplace=True)
+
 # Prep map
 m = folium.Map(tiles="cartodb positron", zoom_start = 3, location=(65,-110))
 fg = folium.FeatureGroup(name="Facilities")
@@ -91,9 +93,28 @@ markers = []
 for i,s in enumerate(select_substances):
     if i == 0:
         sub0 = aggregate.loc[aggregate["Substance"]==s]
+        sub0ind = ind.loc[ind["Substance"]==s]
         col2.markdown("## Top ten facilities: {}, ".format(s) + str(select_times[0]) + "-" + str(select_times[1]))
         toptentotal = sub0.sort_values(by="SumInTonnes", ascending=False).head(10)
-        col2.dataframe(toptentotal) # Add more info here
+        #col2.dataframe(toptentotal) # Add more info here or do altair chart
+        toptentotal.reset_index(inplace=True)
+        toptentotal["NpriID"] = toptentotal["NpriID"].astype(str)
+        col2.altair_chart(
+            altair.Chart(toptentotal).mark_bar().encode(
+                x=altair.X("SumInTonnes"),
+                y=altair.Y("NpriID" ).sort('-x')
+            )
+        )
+        col2.markdown("## Top ten industries: {}, ".format(s) + str(select_times[0]) + "-" + str(select_times[1]))
+        toptenind = sub0ind.sort_values(by="SumInTonnes", ascending=False).head(10)
+        #col2.dataframe(toptenind) # Add more info here or do altair chart
+        toptenind.reset_index(inplace=True)
+        col2.altair_chart(
+            altair.Chart(toptenind).mark_bar().encode(
+                x=altair.X("SumInTonnes"),
+                y=altair.Y("NAICSTitleEn" ).sort('-x')
+            )
+        )
         select_facs_0 = col2.slider(
             "Facilities releasing "+ s +" in this range:",
             sub0["SumInTonnes"].min(), sub0["SumInTonnes"].max(), (sub0["SumInTonnes"].min(), sub0["SumInTonnes"].max()))
@@ -164,9 +185,6 @@ markers.sort(key=lambda x: x.options["radius"], reverse=True)
 for marker in markers:
     fg.add_child(marker)
 
-#bounds = m.get_bounds() # Currently does not work. Follow: https://github.com/randyzwitch/streamlit-folium/issues/152
-#m.fit_bounds(bounds)
-
 with col1:
     st_folium(
         m,
@@ -176,14 +194,14 @@ with col1:
     )
     #st.warning('There are '+str(nodata)+' facilities without records on '+selector+' and an additional '+str(unmappable)+' that cannot be mapped', icon="⚠️")
 
-#col1.bar_chart(chart_data, x = "NpriID", y = selector) # Would need Altair for an effective (sorted) bar chart
-
+# CIMD
 x, y = col1.columns(2)
 from functools import reduce
 all_fac = reduce(lambda x, y: pandas.merge(x, y, on = 'NpriID'), all_fac)
 all_fac = list(all_fac.index.unique())
-x.metric("Median Residential Instability Score", round(context.loc[context.index.isin(all_fac)][["median_instability_2021"]].median(),2)) # Need to explain median median.
-x.info('Explain median of median and compare to national residential instability', icon="ℹ️")
-# OTHER METRICS HERE
-y.metric("Max Residential Instability Score", round(context.loc[context.index.isin(all_fac)][["median_instability_2021"]].max(),2)) # Need to explain max median.
-y.info('Explain median of median and compare to national residential instability', icon="ℹ️")
+st.write(cimd)
+for metric in cimd.keys():
+    st.write(metric)
+    x.metric("Median of "+cimd[metric], round(context.loc[context.index.isin(all_fac)][[metric]].median(),2)) # Need to explain median median.
+    x.metric("Max of "+cimd[metric], round(context.loc[context.index.isin(all_fac)][[metric]].max(),2)) # Need to explain max median.
+    y.info('TBD: Explain median of median and compare to national residential instability', icon="ℹ️")
