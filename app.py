@@ -1,5 +1,8 @@
 import streamlit as st
 
+pg = st.navigation([st.Page("pages/1_Overview.py"), st.Page("pages/2_Places.py")], position="hidden")
+pg.run()
+
 st.markdown("""# NPRI Dashboards
 The npri-tools project contextualizes publicly-available information relevant to addressing environmental racism in Canada.
 
