@@ -6,8 +6,6 @@ import altair
 from copy import deepcopy
 import requests
 
-st.set_page_config(layout="wide", page_title="Places")
-
 substances = ["Carbon monoxide",
             "Sulphur dioxide",
             "Ammonia (total)",
@@ -84,32 +82,54 @@ def get_context(list_of_ids):
 
 # PAGE LAYOUT
 top = st.container()
-left, middle, right = top.columns([.15,.6, .25])
-left.markdown("# Places")
+left, middle = top.columns([.15,.85])
+left.markdown("## Places")
 middle.markdown("This page provides more information about facilities in a given place reporting releases of regulated substances to the National Pollutant Release Inventory")
 middle.warning("These numbers are facility self-reported estimates compiled by Environment and Climate Change Canada. Please see here for more information about how to interpet NPRI data: https://www.canada.ca/en/environment-climate-change/services/national-pollutant-release-inventory/using-interpreting-data.html")
-right.markdown("Click here to see an overview: ")
-if right.button("Overview"):
-    st.switch_page("pages/1_Overview.py")
 
 col1, col2 = st.columns([0.4, 0.6])
 
 # SELECTIONS
+## Select FSA
+idx = 0
+if "fsa" in st.query_params.keys():
+    if st.query_params["fsa"].upper() in list(fsas["ForwardSortationArea"].unique()):
+        idx = list(fsas["ForwardSortationArea"].unique()).index(st.query_params["fsa"].upper())
+    else:
+        st.query_params["fsa"] = list(fsas["ForwardSortationArea"].unique())[0]
+else:
+    st.query_params["fsa"] = list(fsas["ForwardSortationArea"].unique())[0]
+def change_fsa_url():
+    st.query_params["fsa"] = st.session_state.fsa
 select_fsa  = col2.selectbox(
     "### **1. Select an FSA**",
     list(fsas["ForwardSortationArea"].unique()),
-    help = "Forward Sortation Areas are the first three numbers/letters of a postal code, e.g. N1E"
+    index = idx,
+    help = "Forward Sortation Areas are the first three numbers/letters of a postal code, e.g. N1E",
+    on_change=change_fsa_url,
+    key="fsa"
 )
+
 col2a, col2b = col2.columns(2)
+
+## Select substance
+idx = 0
+if "substance" in st.query_params.keys():
+    if st.query_params["substance"].lower() in [s.lower() for s in substances]:
+        idx = [s.lower() for s in substances].index(st.query_params["substance"].lower())
+    else:
+        st.query_params["substance"] = substances[0]
+else:
+    st.query_params["substance"] = substances[0]
+def change_sub_url():
+    st.query_params["substance"] = st.session_state.substance
 select_substance  = col2a.selectbox( #multiselect
     "### **2. Select a Criteria Air Contaminant**",
     substances,
-    help = "Criteria Air Contaminants are the most common air pollutants in Canada by weight. See here: https://www.canada.ca/en/environment-climate-change/services/air-pollution/pollutants/common-contaminants.html"
-)
-select_time  = col2a.selectbox(
-    "### **3. Select a timeframe**",
-    times,   
-    help = "NPRI began in 1993, but some substances were only added to the list later."
+    index=idx,
+    help = "Criteria Air Contaminants are the most common air pollutants in Canada by weight. See here: https://www.canada.ca/en/environment-climate-change/services/air-pollution/pollutants/common-contaminants.html",
+    on_change = change_sub_url,
+    key="substance"
 )
 ## Get health information
 url = "https://www.canada.ca/en/health-canada/services/chemical-substances/fact-sheets/chemicals-glance/{}.html".format(select_substance.lower().replace(" ", "-"))
@@ -119,6 +139,27 @@ if page.status_code == 200:
 else:
     health = "Unable to retrieve information about the health effects of "+select_substance+" at this time. Try searching: https://www.canada.ca/en/health-canada/services/chemical-substances/fact-sheets/chemicals-glance/"
 col2a.info(health, icon="ℹ️")
+
+## Select time
+idx = 0
+if "timeframe" in st.query_params.keys():
+    if st.query_params["timeframe"].lower() in [t.lower() for t in times]:
+        idx = [t.lower() for t in times].index(st.query_params["timeframe"].lower())
+    else:
+        st.query_params["timeframe"] = times[0]
+else:
+    st.query_params["timeframe"] = times[0]
+def change_times_url():
+    st.query_params["timeframe"] = st.session_state.time
+select_time  = col2a.selectbox(
+    "### **3. Select a timeframe**",
+    times,
+    index=idx, 
+    help = "NPRI began in 1993, but some substances were only added to the list later.",
+    on_change=change_times_url,
+    key="time"
+)
+
 
 # GET DATA
 places = get_places(select_fsa)
@@ -134,7 +175,7 @@ min = facilities.data[select_measure].min()
 max = facilities.data[select_measure].max()
 filter_fac = col2a.slider(
     "### **4. Filter the facilities releasing "+ select_substance +" in this range (tonnes):**",
-    min, max, (min, max)
+    min-.01, max+.01, (min, max)
     )
 filtered = deepcopy(facilities)
 filtered.working_data = filtered.working_data.loc[(filtered.working_data[select_measure]>=filter_fac[0]) & (filtered.working_data[select_measure]<=filter_fac[1])]
@@ -186,10 +227,10 @@ filtered_places.working_data = filtered_places.working_data.loc[(filtered_places
 #st.write(filtered)
 
 # Scatter plot
-x = select_measure #select_substance + " - Allocated"
+x = select_substance + " - Allocated"
 y = select_attribute_place
-chart_data = filtered_places.working_data.reset_index()[[x,y]]
-col2b.markdown("#### Characteristics of Dissemination Areas with Facilities".format(str(toptenind.shape[0])))
+col2b.markdown("#### Characteristics of Dissemination Areas")
+col2b.info("Here, releases of "+select_substance+" are 'allocated' across the Census Dissemination Areas that are within 5 km of polluting facilities, based on how much each Dissemination Area intersects with that buffer",icon="ℹ️")
 col2b.scatter_chart(filtered_places.working_data.reset_index(), x=x, y=y)
 
 # CIMD

@@ -7,8 +7,6 @@ import geopandas
 import altair
 import requests
 
-st.set_page_config(layout="wide", page_title="Overview")
-
 @st.cache_data
 def get_substances():
     try:
@@ -43,21 +41,34 @@ def get_context(list_of_ids):
 
 # PAGE LAYOUT
 top = st.container()
-left, middle, right = top.columns([.15,.6, .25])
-left.markdown("# Overview")
+left, middle = top.columns([.15,.85])
+left.markdown("## Overview")
 middle.markdown("This page provides an overview of facilities reporting releases of regulated substances to the National Pollutant Release Inventory")
 middle.warning("These numbers are facility self-reported estimates compiled by Environment and Climate Change Canada. Please see here for more information about how to interpet NPRI data: https://www.canada.ca/en/environment-climate-change/services/national-pollutant-release-inventory/using-interpreting-data.html")
-right.markdown("Click here to focus on releases in a specific area: ")
-if right.button("Places"):
-    st.switch_page("pages/2_Places.py")
 
 col1, col2 = st.columns([0.4, 0.6])
 col2a, col2b = col2.columns(2)
+
+## SELECT SUBSTANCES
+idx = 0
+if "substance" in st.query_params.keys():
+    if st.query_params["substance"].lower() in list(substances["Substance"].str.lower()):
+        idx = list(substances["Substance"].str.lower()).index(st.query_params["substance"].lower())
+    else:
+        st.query_params["substance"] = list(substances["Substance"].str.lower())[0]
+else:
+    st.query_params["substance"] = list(substances["Substance"].str.lower())[0]
+def change_sub_url():
+    st.query_params["substance"] = st.session_state.substance
 select_substances  = col2a.selectbox( #multiselect
     "### **1. Select a pollutant**",
-    list(substances["Substance"].unique()),
-    help = "See more about which substances are required to be reported on and in what amounts here: https://www.canada.ca/en/environment-climate-change/services/national-pollutant-release-inventory/substances-list/threshold.html"
+    substances,
+    index = idx,
+    help = "See more about which substances are required to be reported on and in what amounts here: https://www.canada.ca/en/environment-climate-change/services/national-pollutant-release-inventory/substances-list/threshold.html",
+    on_change = change_sub_url,
+    key="substance"
 )
+
 ## Get health information
 url = "https://www.canada.ca/en/health-canada/services/chemical-substances/fact-sheets/chemicals-glance/{}.html".format(select_substances.lower().replace(" ", "-"))
 page = requests.get(url)
@@ -67,12 +78,35 @@ else:
     health = "Unable to retrieve information about the health effects of  "+select_substances+" at this time. Try searching: https://www.canada.ca/en/health-canada/services/chemical-substances/fact-sheets/chemicals-glance/"
 col2a.info(health, icon="ℹ️")
 
-times = [year for year in range(1993,2022)]
+## SELECT TIMES
+times = [year for year in range(1993,2023)]
+start_time_idx = times[0]
+end_time_idx = times[-1]
+if "start_time" in st.query_params.keys():
+    if int(st.query_params["start_time"]) in times:
+        start_time_idx = int(st.query_params["start_time"])
+    else:
+        st.query_params["start_time"] = start_time_idx
+else:
+    st.query_params["start_time"] = start_time_idx
+if "end_time" in st.query_params.keys():
+    if int(st.query_params["end_time"]) in times:
+        end_time_idx = int(st.query_params["end_time"])
+    else:
+        st.query_params["end_time"] = end_time_idx
+else:
+    st.query_params["end_time"] = end_time_idx
+def change_times_url():
+    st.query_params["start_time"] = st.session_state.time[0]
+    st.query_params["end_time"] = st.session_state.time[1]
 select_times = col2a.slider(
     "### **2. Select a timeframe to focus on**",
-    1993, 2022, (2013, 2022),
+    1993, 2022, (start_time_idx, end_time_idx),
     step = 1,
-    help = "NPRI began in 1993, but some substances were only added to the list later.")
+    help = "NPRI began in 1993, but some substances were only added to the list later.",
+    on_change=change_times_url,
+    key="time"
+    )
 
 ## Get data
 records = get_records([select_substances], select_times)
@@ -185,9 +219,9 @@ col2a.markdown("#### 2021 Canadian Index of Multiple Deprivation")
 for metric in cimd.keys():
     #col2a.metric("Median of "+cimd[metric][0], 
     #        round(context.loc[context.index.isin(list(aggregate.index))][[metric]].median(),2),
-    #        help = cimd[metric][0] + " refers to " + cimd[metric][1] + "as measured across Census Dissemination Areas within 5km of #these facilities."
+    #        help = cimd[metric][0] + " refers to " + cimd[metric][1] + " as measured across Census Dissemination Areas within 5km of #these facilities."
     #        )
     col2a.metric("Max of "+cimd[metric][0], 
             round(context.loc[context.index.isin(list(aggregate.index))][[metric]].max(),2),
-            help = cimd[metric][0] + " refers to " + cimd[metric][1] + "as measured across Census Dissemination Areas within 5km of these facilities. See here: https://www150.statcan.gc.ca/n1/pub/45-20-0001/452000012023002-eng.htm"
+            help = cimd[metric][0] + " refers to " + cimd[metric][1] + " as measured across Census Dissemination Areas within 5km of these facilities. See here: https://www150.statcan.gc.ca/n1/pub/45-20-0001/452000012023002-eng.htm"
             )
